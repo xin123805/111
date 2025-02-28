@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>温度可视化粒子系统</title>
+    <style>
+        canvas {
+            background: #000;
+        }
+        button {
+            padding: 8px 15px;
+            margin: 5px;
+            background: #0066CC;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .controls {
+            margin: 10px;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .temp-indicator {
+            position: relative;
+            padding: 8px 20px;
+            background: #333;
+            border-radius: 20px;
+            min-width: 100px;
+            text-align: center;
+        }
+        .temp-bar {
+            position: absolute;
+            left: 0;
+            top: 0;
+            height: 100%;
+            background: linear-gradient(90deg, #00f, #0ff, #0f0, #ff0, #f00);
+            border-radius: 20px;
+            opacity: 0.3;
+            transition: width 0.3s ease;
+        }
+        .temp-value {
+            position: relative;
+            z-index: 2;
+            font-weight: bold;
+            font-family: Arial, sans-serif;
+        }
+        input[type="range"] {
+            width: 200px;
+            height: 5px;
+            background: #444;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button id="control">开始/暂停</button>
+        <label>温度调节：</label>
+        <input type="range" id="temperature" min="-273" max="1000" value="25">
+        <div class="temp-indicator">
+            <div class="temp-bar" id="tempBar"></div>
+            <span class="temp-value" id="tempValue">25°C</span>
+        </div>
+    </div>
+    <canvas id="canvas" width="800" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let animate = false;
+const particles = [];
+const BASE_RADIUS = 10;
+const MAIN_PARTICLE_INDEX = 19;
+const TRAIL_DURATION = 2000;
+
+// 温度参数
+const MIN_TEMP = -273;
+const MAX_TEMP = 1000;
+let temperature = 25;
+const MIN_SPEED = 0.01;
+const MAX_SPEED = 5.0;
+
+// 温度控件
+const tempControl = document.getElementById('temperature');
+const tempDisplay = document.getElementById('tempValue');
+const tempBar = document.getElementById('tempBar');
+
+tempControl.addEventListener('input', (e) => {
+    temperature = parseInt(e.target.value);
+    
+    // 更新温度显示
+    tempDisplay.textContent = `${temperature}°C`;
+    
+    // 更新温度条
+    const tempPercent = Math.max(0, (temperature - MIN_TEMP) / (MAX_TEMP - MIN_TEMP)) * 100;
+    tempBar.style.width = `${tempPercent}%`;
+    
+    // 更新颜色
+    const hue = 240 - (temperature - MIN_TEMP)/(MAX_TEMP - MIN_TEMP)*240;
+    tempDisplay.style.color = `hsl(${hue}, 80%, 60%)`;
+});
+
+// 正态分布随机数
+function normalRand() {
+    let sum = 0;
+    for(let i = 0; i < 6; i++) sum += Math.random();
+    return (sum - 3) * 0.5;
+}
+
+class Particle {
+    constructor(radius = BASE_RADIUS, color = '#0066CC') {
+        this.radius = radius;
+        this.color = color;
+        this.vx = 0;
+        this.vy = 0;
+        this.history = [];
+        this.reset();
+    }
+
+    reset() {
+        this.x = this.radius + Math.random() * (canvas.width - 2 * this.radius);
+        this.y = this.radius + Math.random() * (canvas.height - 2 * this.radius);
+        this.history = [];
+    }
+
+    getSpeedFactor() {
+        const normalizedTemp = Math.max(0, (temperature - MIN_TEMP) / (MAX_TEMP - MIN_TEMP));
+        return MIN_SPEED + (MAX_SPEED - MIN_SPEED) * Math.pow(normalizedTemp, 1.5);
+    }
+
+    update() {
+        const speedFactor = this.getSpeedFactor();
+        
+        this.vx += normalRand() * 0.3 * speedFactor;
+        this.vy += normalRand() * 0.3 * speedFactor;
+        this.vx *= 0.98 - (0.02 * (1 - speedFactor/MAX_SPEED));
+        this.vy *= 0.98 - (0.02 * (1 - speedFactor/MAX_SPEED));
+        
+        this.x += this.vx;
+        this.y += this.vy;
+
+        // 主粒子轨迹
+        if(this === particles[MAIN_PARTICLE_INDEX]) {
+            const now = performance.now();
+            this.history.push({x: this.x, y: this.y, time: now});
+            while(this.history.length > 0 && now - this.history[0].time > TRAIL_DURATION) {
+                this.history.shift();
+            }
+        }
+    }
+
+    draw() {
+        if(this === particles[MAIN_PARTICLE_INDEX]) {
+            const now = performance.now();
+            for(let i = 1; i < this.history.length; i++) {
+                const age = now - this.history[i].time;
+                const alpha = Math.max(0, 0.3 * (1 - age/TRAIL_DURATION));
+                ctx.strokeStyle = `rgba(255, 215, 0, ${alpha})`;
+                ctx.beginPath();
+                ctx.moveTo(this.history[i-1].x, this.history[i-1].y);
+                ctx.lineTo(this.history[i].x, this.history[i].y);
+                ctx.stroke();
+            }
+            ctx.strokeStyle = '#FFD700';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius + 3, 0, Math.PI*2);
+            ctx.stroke();
+        }
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+        ctx.fill();
+    }
+}
+
+// 初始化粒子
+Array(19).fill().forEach(() => particles.push(new Particle()));
+particles.push(new Particle(BASE_RADIUS * 1.5, '#FFD700'));
+
+// 碰撞处理
+function handleCollisions() {
+    for(let i = 0; i < particles.length; i++) {
+        for(let j = i + 1; j < particles.length; j++) {
+            const p1 = particles[i];
+            const p2 = particles[j];
+            const dx = p2.x - p1.x;
+            const dy = p2.y - p1.y;
+            const distance = Math.sqrt(dx*dx + dy*dy);
+            const minDist = p1.radius + p2.radius;
+            if(distance < minDist) {
+                const nx = dx / distance;
+                const ny = dy / distance;
+                const dvx = p2.vx - p1.vx;
+                const dvy = p2.vy - p1.vy;
+                const projection = dvx * nx + dvy * ny;
+                if(projection < 0) {
+                    const m1 = p1.radius ** 2;
+                    const m2 = p2.radius ** 2;
+                    const impulse = (2 * projection) / (m1 + m2);
+                    p1.vx += impulse * m2 * nx;
+                    p1.vy += impulse * m2 * ny;
+                    p2.vx -= impulse * m1 * nx;
+                    p2.vy -= impulse * m1 * ny;
+                    const overlap = (minDist - distance) / 2;
+                    p1.x -= overlap * nx;
+                    p1.y -= overlap * ny;
+                    p2.x += overlap * nx;
+                    p2.y += overlap * ny;
+                }
+            }
+        }
+    }
+}
+
+function update() {
+    if(!animate) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    particles.forEach(p => {
+        p.update();
+        if(p.x < p.radius) {
+            p.x = p.radius;
+            p.vx *= -0.8;
+        }
+        if(p.x > canvas.width - p.radius) {
+            p.x = canvas.width - p.radius;
+            p.vx *= -0.8;
+        }
+        if(p.y < p.radius) {
+            p.y = p.radius;
+            p.vy *= -0.8;
+        }
+        if(p.y > canvas.height - p.radius) {
+            p.y = canvas.height - p.radius;
+            p.vy *= -0.8;
+        }
+    });
+    
+    handleCollisions();
+    particles.forEach(p => p.draw());
+    requestAnimationFrame(update);
+}
+
+document.getElementById('control').onclick = () => {
+    animate = !animate;
+    if(animate) update();
+};
+particles.forEach(p => p.reset());
+</script>
+</body>
+</html>
